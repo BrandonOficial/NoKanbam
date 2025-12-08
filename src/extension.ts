@@ -88,12 +88,6 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
       case "import":
         await this._importData();
         break;
-      case "exportJson":
-        await this._exportJson();
-        break;
-      case "importJson":
-        await this._importJson();
-        break;
       case "syncGist":
         await this._syncGist();
         break;
@@ -143,8 +137,13 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
   private async _importData() {
     const options: vscode.OpenDialogOptions = {
       canSelectMany: false,
-      openLabel: "Importar Texto",
-      filters: { Arquivos: ["txt", "md", "json"] },
+      openLabel: "Importar",
+      filters: {
+        "Todos os formatos": ["txt", "md", "json"],
+        Markdown: ["md"],
+        Texto: ["txt"],
+        JSON: ["json"],
+      },
     };
 
     const fileUri = await vscode.window.showOpenDialog(options);
@@ -153,14 +152,52 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
       try {
         const fileData = await vscode.workspace.fs.readFile(fileUri[0]);
         const fileContent = new TextDecoder().decode(fileData);
-        await this._globalState.update("notepadContent", fileContent);
+        const fileName = fileUri[0].fsPath.toLowerCase();
 
-        if (this._view) {
-          this._view.webview.postMessage({
-            command: "updateNotes",
-            text: fileContent,
-          });
-          vscode.window.showInformationMessage("Importado com sucesso!");
+        // Verificar se é JSON
+        if (fileName.endsWith(".json")) {
+          try {
+            const data = JSON.parse(fileContent);
+            if (data.notes !== undefined) {
+              await this._globalState.update(
+                "notepadContent",
+                data.notes || ""
+              );
+            }
+            if (data.tasks !== undefined) {
+              await this._globalState.update("todoList", data.tasks || []);
+              this._updateBadge(data.tasks || []);
+            }
+
+            if (this._view) {
+              this._view.webview.postMessage({
+                command: "updateNotes",
+                text: data.notes || "",
+              });
+              this._view.webview.postMessage({
+                command: "updateTasks",
+                tasks: data.tasks || [],
+              });
+              vscode.window.showInformationMessage(
+                "JSON importado com sucesso!"
+              );
+            }
+          } catch (jsonError) {
+            vscode.window.showErrorMessage(
+              "Erro ao importar JSON. Verifique se o arquivo é válido."
+            );
+          }
+        } else {
+          // Importação de texto normal (TXT/MD)
+          await this._globalState.update("notepadContent", fileContent);
+
+          if (this._view) {
+            this._view.webview.postMessage({
+              command: "updateNotes",
+              text: fileContent,
+            });
+            vscode.window.showInformationMessage("Importado com sucesso!");
+          }
         }
       } catch (error) {
         vscode.window.showErrorMessage("Erro ao ler arquivo.");
@@ -171,19 +208,43 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
   private async _exportData() {
     const notes = this._getSavedNotes();
     const tasks = this._getSavedTasks();
-    const content = this._generateExportContent(notes, tasks);
 
     const uri = await vscode.window.showSaveDialog({
-      saveLabel: "Exportar Notas",
-      filters: { Markdown: ["md"], Texto: ["txt"] },
+      saveLabel: "Exportar",
+      filters: {
+        "Todos os formatos": ["txt", "md", "json"],
+        Markdown: ["md"],
+        Texto: ["txt"],
+        JSON: ["json"],
+      },
     });
 
     if (uri) {
+      const fileName = uri.fsPath.toLowerCase();
+      let content: string;
+      let message: string;
+
+      if (fileName.endsWith(".json")) {
+        // Exportar como JSON
+        const data = {
+          version: "1.0",
+          exportedAt: new Date().toISOString(),
+          notes,
+          tasks,
+        };
+        content = JSON.stringify(data, null, 2);
+        message = "JSON exportado com sucesso!";
+      } else {
+        // Exportar como texto (MD/TXT)
+        content = this._generateExportContent(notes, tasks);
+        message = "Salvo com sucesso!";
+      }
+
       await vscode.workspace.fs.writeFile(
         uri,
         new TextEncoder().encode(content)
       );
-      vscode.window.showInformationMessage("Salvo com sucesso!");
+      vscode.window.showInformationMessage(message);
     }
   }
 
@@ -944,14 +1005,6 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
             </div>
             
             <div class="settings-section">
-                <h3>Exportar/Importar</h3>
-                <div class="settings-item">
-                    <button class="settings-btn" id="export-json-btn">Exportar JSON Completo</button>
-                    <button class="settings-btn secondary" id="import-json-btn">Importar JSON Completo</button>
-                </div>
-            </div>
-
-            <div class="settings-section">
                 <h3>Sincronização GitHub Gist</h3>
                 <div class="settings-item">
                     <label>Token do GitHub (Personal Access Token)</label>
@@ -1176,12 +1229,6 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
         document.getElementById('close-settings').addEventListener('click', () => {
             document.getElementById('settings-modal').classList.remove('active');
         });
-        document.getElementById('export-json-btn').addEventListener('click', () => {
-            vscode.postMessage({ command: 'exportJson' });
-        });
-        document.getElementById('import-json-btn').addEventListener('click', () => {
-            vscode.postMessage({ command: 'importJson' });
-        });
         document.getElementById('save-gist-token-btn').addEventListener('click', () => {
             const token = document.getElementById('gist-token-input').value;
             if (token) {
@@ -1256,73 +1303,6 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
       .replace(/\\/g, "\\\\")
       .replace(/"/g, '\\"')
       .replace(/\n/g, "\\n");
-  }
-
-  private async _exportJson() {
-    const notes = this._getSavedNotes();
-    const tasks = this._getSavedTasks();
-    const data = {
-      version: "1.0",
-      exportedAt: new Date().toISOString(),
-      notes,
-      tasks,
-    };
-
-    const uri = await vscode.window.showSaveDialog({
-      saveLabel: "Exportar JSON",
-      filters: { JSON: ["json"] },
-      defaultUri: vscode.Uri.file(`notepad-backup-${Date.now()}.json`),
-    });
-
-    if (uri) {
-      await vscode.workspace.fs.writeFile(
-        uri,
-        new TextEncoder().encode(JSON.stringify(data, null, 2))
-      );
-      vscode.window.showInformationMessage("JSON exportado com sucesso!");
-    }
-  }
-
-  private async _importJson() {
-    const options: vscode.OpenDialogOptions = {
-      canSelectMany: false,
-      openLabel: "Importar JSON",
-      filters: { JSON: ["json"] },
-    };
-
-    const fileUri = await vscode.window.showOpenDialog(options);
-
-    if (fileUri?.[0]) {
-      try {
-        const fileData = await vscode.workspace.fs.readFile(fileUri[0]);
-        const fileContent = new TextDecoder().decode(fileData);
-        const data = JSON.parse(fileContent);
-
-        if (data.notes !== undefined) {
-          await this._globalState.update("notepadContent", data.notes || "");
-        }
-        if (data.tasks !== undefined) {
-          await this._globalState.update("todoList", data.tasks || []);
-          this._updateBadge(data.tasks || []);
-        }
-
-        if (this._view) {
-          this._view.webview.postMessage({
-            command: "updateNotes",
-            text: data.notes || "",
-          });
-          this._view.webview.postMessage({
-            command: "updateTasks",
-            tasks: data.tasks || [],
-          });
-          vscode.window.showInformationMessage("JSON importado com sucesso!");
-        }
-      } catch (error) {
-        vscode.window.showErrorMessage(
-          "Erro ao importar JSON. Verifique se o arquivo é válido."
-        );
-      }
-    }
   }
 
   private async _configureGist() {
