@@ -20,11 +20,14 @@ export function activate(context: vscode.ExtensionContext) {
 
 class NotepadSidebarProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
+  private _autoBackupInterval?: NodeJS.Timeout;
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
     private readonly _globalState: vscode.Memento
-  ) {}
+  ) {
+    this._initializeAutoBackup();
+  }
 
   public resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -36,13 +39,25 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
 
     const savedNotes = this._getSavedNotes();
     const savedTasks = this._getSavedTasks();
+    const autoBackupEnabled = this._globalState.get<boolean>(
+      "autoBackupEnabled",
+      false
+    );
+    const autoBackupInterval = this._globalState.get<number>(
+      "autoBackupInterval",
+      30
+    );
+    const gistToken = this._globalState.get<string>("gistToken", "");
 
     this._updateBadge(savedTasks);
 
     webviewView.webview.html = this._getHtmlForWebview(
       webviewView.webview,
       savedNotes,
-      savedTasks
+      savedTasks,
+      autoBackupEnabled,
+      autoBackupInterval,
+      gistToken
     );
 
     webviewView.webview.onDidReceiveMessage(async (data) => {
@@ -72,6 +87,28 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
         break;
       case "import":
         await this._importData();
+        break;
+      case "exportJson":
+        await this._exportJson();
+        break;
+      case "importJson":
+        await this._importJson();
+        break;
+      case "syncGist":
+        await this._syncGist();
+        break;
+      case "configureGist":
+        if (data.token) {
+          await this._globalState.update("gistToken", data.token);
+          vscode.window.showInformationMessage(
+            "Token configurado com sucesso!"
+          );
+        } else {
+          await this._configureGist();
+        }
+        break;
+      case "enableAutoBackup":
+        await this._enableAutoBackup(data.enabled, data.interval);
         break;
     }
   }
@@ -171,10 +208,14 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
   private _getHtmlForWebview(
     webview: vscode.Webview,
     notes: string,
-    tasks: any[]
+    tasks: any[],
+    autoBackupEnabled: boolean = false,
+    autoBackupInterval: number = 30,
+    gistToken: string = ""
   ) {
     const safeNotes = this._sanitizeForJson(notes);
     const safeTasks = JSON.stringify(tasks);
+    const safeGistToken = this._sanitizeForJson(gistToken);
 
     return `<!DOCTYPE html>
 <html lang="pt-br">
@@ -690,6 +731,148 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
             font-size: 12px;
             line-height: 1.6;
         }
+
+        /* SETTINGS MODAL */
+        .settings-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .settings-modal.active {
+            display: flex;
+        }
+
+        .settings-content {
+            background: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 8px;
+            padding: 24px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .settings-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .settings-header h2 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .close-btn {
+            background: transparent;
+            border: none;
+            color: var(--vscode-foreground);
+            cursor: pointer;
+            font-size: 24px;
+            padding: 0;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .close-btn:hover {
+            background: var(--vscode-list-hoverBackground);
+        }
+
+        .settings-section {
+            margin-bottom: 24px;
+        }
+
+        .settings-section h3 {
+            margin: 0 0 12px 0;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .settings-item {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        .settings-item label {
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .settings-item input,
+        .settings-item select {
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-input-border);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            outline: none;
+        }
+
+        .settings-item input:focus,
+        .settings-item select:focus {
+            border-color: var(--vscode-focusBorder);
+            box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+        }
+
+        .settings-item input[type="checkbox"] {
+            width: auto;
+            height: auto;
+            margin: 0;
+            cursor: pointer;
+        }
+
+        .checkbox-row {
+            flex-direction: row;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .settings-btn {
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: all 0.2s;
+            width: 100%;
+            margin-top: 8px;
+        }
+
+        .settings-btn:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+
+        .settings-btn.secondary {
+            background: var(--vscode-input-background);
+            color: var(--vscode-foreground);
+            border: 1px solid var(--vscode-input-border);
+        }
+
+        .settings-btn.secondary:hover {
+            background: var(--vscode-list-hoverBackground);
+        }
     </style>
 </head>
 <body>
@@ -697,6 +880,11 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
         <button class="tab-btn active" onclick="switchTab('notes')">Notes</button>
         <button class="tab-btn" onclick="switchTab('tasks')">Tasks</button>
         <div class="actions">
+            <button class="action-btn" id="sync-btn" title="Sincronizar com GitHub Gist">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zM4.5 7.5a.5.5 0 0 0 0 1h5.793l-2.147 2.146a.5.5 0 0 0 .708.708l3-3a.5.5 0 0 0 0-.708l-3-3a.5.5 0 1 0-.708.708L10.293 7.5H4.5z"/>
+                </svg>
+            </button>
             <button class="action-btn" id="import-btn" title="Importar">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                     <path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708l3-3z"/>
@@ -707,6 +895,12 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                     <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
                     <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                </svg>
+            </button>
+            <button class="action-btn" id="settings-btn" title="Configurações">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/>
+                    <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a1.873 1.873 0 0 1-1.255 1.327l-.319.094a1.785 1.785 0 0 0-1.201 1.201l-.094.319c-1.79.527-1.79 3.065 0 3.592l.319.094a1.785 1.785 0 0 0 1.201 1.201l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a1.873 1.873 0 0 1 1.255-1.327l.319-.094a1.785 1.785 0 0 0 1.201-1.201l.094-.319c1.79-.527 1.79-3.065 0-3.592l-.319-.094a1.785 1.785 0 0 0-1.201-1.201l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 1.255 1.327l.319.094c.335.093.58.339.673.673l.094.319c.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-1.255-1.327l-.319-.094a1.785 1.785 0 0 1-1.201-1.201l-.094-.319z"/>
                 </svg>
             </button>
         </div>
@@ -742,6 +936,51 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
         <ul id="task-list"></ul>
     </div>
 
+    <div class="settings-modal" id="settings-modal">
+        <div class="settings-content">
+            <div class="settings-header">
+                <h2>Configurações</h2>
+                <button class="close-btn" id="close-settings">&times;</button>
+            </div>
+            
+            <div class="settings-section">
+                <h3>Exportar/Importar</h3>
+                <div class="settings-item">
+                    <button class="settings-btn" id="export-json-btn">Exportar JSON Completo</button>
+                    <button class="settings-btn secondary" id="import-json-btn">Importar JSON Completo</button>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h3>Sincronização GitHub Gist</h3>
+                <div class="settings-item">
+                    <label>Token do GitHub (Personal Access Token)</label>
+                    <input type="password" id="gist-token-input" placeholder="ghp_xxxxxxxxxxxx" />
+                    <button class="settings-btn" id="save-gist-token-btn">Salvar Token</button>
+                    <button class="settings-btn secondary" id="sync-gist-btn">Sincronizar Agora</button>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h3>Backup Automático</h3>
+                <div class="settings-item checkbox-row">
+                    <input type="checkbox" id="auto-backup-checkbox" />
+                    <label for="auto-backup-checkbox">Habilitar backup automático</label>
+                </div>
+                <div class="settings-item">
+                    <label>Intervalo (minutos)</label>
+                    <select id="backup-interval-select">
+                        <option value="15">15 minutos</option>
+                        <option value="30" selected>30 minutos</option>
+                        <option value="60">1 hora</option>
+                        <option value="120">2 horas</option>
+                        <option value="240">4 horas</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const vscode = acquireVsCodeApi();
         const notesArea = document.getElementById('notes-area');
@@ -753,6 +992,11 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
         let tasks = ${safeTasks};
         let currentFilter = 'all';
         let searchQuery = '';
+        
+        // Inicializar configurações
+        document.getElementById('auto-backup-checkbox').checked = ${autoBackupEnabled};
+        document.getElementById('backup-interval-select').value = '${autoBackupInterval}';
+        document.getElementById('gist-token-input').value = "${safeGistToken}";
 
         notesArea.addEventListener('input', () => {
             vscode.postMessage({ command: 'saveNotes', text: notesArea.value });
@@ -923,10 +1167,53 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
         document.getElementById('import-btn').addEventListener('click', () => {
             vscode.postMessage({ command: 'import' });
         });
+        document.getElementById('sync-btn').addEventListener('click', () => {
+            vscode.postMessage({ command: 'syncGist' });
+        });
+        document.getElementById('settings-btn').addEventListener('click', () => {
+            document.getElementById('settings-modal').classList.add('active');
+        });
+        document.getElementById('close-settings').addEventListener('click', () => {
+            document.getElementById('settings-modal').classList.remove('active');
+        });
+        document.getElementById('export-json-btn').addEventListener('click', () => {
+            vscode.postMessage({ command: 'exportJson' });
+        });
+        document.getElementById('import-json-btn').addEventListener('click', () => {
+            vscode.postMessage({ command: 'importJson' });
+        });
+        document.getElementById('save-gist-token-btn').addEventListener('click', () => {
+            const token = document.getElementById('gist-token-input').value;
+            if (token) {
+                vscode.postMessage({ command: 'configureGist', token });
+            }
+        });
+        document.getElementById('sync-gist-btn').addEventListener('click', () => {
+            vscode.postMessage({ command: 'syncGist' });
+        });
+        document.getElementById('auto-backup-checkbox').addEventListener('change', (e) => {
+            const enabled = e.target.checked;
+            const interval = parseInt(document.getElementById('backup-interval-select').value);
+            vscode.postMessage({ command: 'enableAutoBackup', enabled, interval });
+        });
+        document.getElementById('backup-interval-select').addEventListener('change', (e) => {
+            const enabled = document.getElementById('auto-backup-checkbox').checked;
+            if (enabled) {
+                const interval = parseInt(e.target.value);
+                vscode.postMessage({ command: 'enableAutoBackup', enabled: true, interval });
+            }
+        });
         taskInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') addTask();
         });
         document.addEventListener('click', closePriorityMenus);
+        
+        // Fechar modal ao clicar fora
+        document.getElementById('settings-modal').addEventListener('click', (e) => {
+            if (e.target.id === 'settings-modal') {
+                document.getElementById('settings-modal').classList.remove('active');
+            }
+        });
 
         renderTasks();
 
@@ -954,6 +1241,10 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
                 notesArea.value = msg.text;
                 switchTab('notes');
             }
+            if (msg.command === 'updateTasks') {
+                tasks = msg.tasks || [];
+                renderTasks();
+            }
         });
     </script>
 </body>
@@ -965,5 +1256,265 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
       .replace(/\\/g, "\\\\")
       .replace(/"/g, '\\"')
       .replace(/\n/g, "\\n");
+  }
+
+  private async _exportJson() {
+    const notes = this._getSavedNotes();
+    const tasks = this._getSavedTasks();
+    const data = {
+      version: "1.0",
+      exportedAt: new Date().toISOString(),
+      notes,
+      tasks,
+    };
+
+    const uri = await vscode.window.showSaveDialog({
+      saveLabel: "Exportar JSON",
+      filters: { JSON: ["json"] },
+      defaultUri: vscode.Uri.file(`notepad-backup-${Date.now()}.json`),
+    });
+
+    if (uri) {
+      await vscode.workspace.fs.writeFile(
+        uri,
+        new TextEncoder().encode(JSON.stringify(data, null, 2))
+      );
+      vscode.window.showInformationMessage("JSON exportado com sucesso!");
+    }
+  }
+
+  private async _importJson() {
+    const options: vscode.OpenDialogOptions = {
+      canSelectMany: false,
+      openLabel: "Importar JSON",
+      filters: { JSON: ["json"] },
+    };
+
+    const fileUri = await vscode.window.showOpenDialog(options);
+
+    if (fileUri?.[0]) {
+      try {
+        const fileData = await vscode.workspace.fs.readFile(fileUri[0]);
+        const fileContent = new TextDecoder().decode(fileData);
+        const data = JSON.parse(fileContent);
+
+        if (data.notes !== undefined) {
+          await this._globalState.update("notepadContent", data.notes || "");
+        }
+        if (data.tasks !== undefined) {
+          await this._globalState.update("todoList", data.tasks || []);
+          this._updateBadge(data.tasks || []);
+        }
+
+        if (this._view) {
+          this._view.webview.postMessage({
+            command: "updateNotes",
+            text: data.notes || "",
+          });
+          this._view.webview.postMessage({
+            command: "updateTasks",
+            tasks: data.tasks || [],
+          });
+          vscode.window.showInformationMessage("JSON importado com sucesso!");
+        }
+      } catch (error) {
+        vscode.window.showErrorMessage(
+          "Erro ao importar JSON. Verifique se o arquivo é válido."
+        );
+      }
+    }
+  }
+
+  private async _configureGist() {
+    const token = await vscode.window.showInputBox({
+      prompt: "Digite seu GitHub Personal Access Token",
+      password: true,
+      placeHolder: "ghp_xxxxxxxxxxxx",
+      ignoreFocusOut: true,
+    });
+
+    if (token) {
+      await this._globalState.update("gistToken", token);
+      vscode.window.showInformationMessage("Token configurado com sucesso!");
+    }
+  }
+
+  private async _syncGist() {
+    const token = this._globalState.get<string>("gistToken");
+    if (!token) {
+      const configure = await vscode.window.showWarningMessage(
+        "Token do GitHub não configurado. Deseja configurar agora?",
+        "Sim",
+        "Não"
+      );
+      if (configure === "Sim") {
+        await this._configureGist();
+      }
+      return;
+    }
+
+    const gistId = this._globalState.get<string>("gistId");
+    const notes = this._getSavedNotes();
+    const tasks = this._getSavedTasks();
+
+    try {
+      const data = {
+        version: "1.0",
+        syncedAt: new Date().toISOString(),
+        notes,
+        tasks,
+      };
+
+      if (gistId) {
+        // Atualizar Gist existente
+        await this._updateGist(token, gistId, data);
+        vscode.window.showInformationMessage("Sincronizado com sucesso!");
+      } else {
+        // Criar novo Gist
+        const newGistId = await this._createGist(token, data);
+        await this._globalState.update("gistId", newGistId);
+        vscode.window.showInformationMessage(
+          "Gist criado e sincronizado com sucesso!"
+        );
+      }
+    } catch (error: any) {
+      vscode.window.showErrorMessage(
+        `Erro ao sincronizar: ${error.message || "Erro desconhecido"}`
+      );
+    }
+  }
+
+  private async _createGist(token: string, data: any): Promise<string> {
+    const response = await fetch("https://api.github.com/gists", {
+      method: "POST",
+      headers: {
+        Authorization: `token ${token}`,
+        "Content-Type": "application/json",
+        "User-Agent": "NoKanban-VSCode-Extension",
+      },
+      body: JSON.stringify({
+        description: "NoKanban Backup",
+        public: false,
+        files: {
+          "notepad-backup.json": {
+            content: JSON.stringify(data, null, 2),
+          },
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const error = (await response.json()) as { message?: string };
+      throw new Error(error.message || "Erro ao criar Gist");
+    }
+
+    const gist = (await response.json()) as { id: string };
+    return gist.id;
+  }
+
+  private async _updateGist(token: string, gistId: string, data: any) {
+    const response = await fetch(`https://api.github.com/gists/${gistId}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `token ${token}`,
+        "Content-Type": "application/json",
+        "User-Agent": "NoKanban-VSCode-Extension",
+      },
+      body: JSON.stringify({
+        description: "NoKanban Backup",
+        files: {
+          "notepad-backup.json": {
+            content: JSON.stringify(data, null, 2),
+          },
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const error = (await response.json()) as { message?: string };
+      throw new Error(error.message || "Erro ao atualizar Gist");
+    }
+  }
+
+  private async _enableAutoBackup(enabled: boolean, intervalMinutes: number) {
+    await this._globalState.update("autoBackupEnabled", enabled);
+    await this._globalState.update("autoBackupInterval", intervalMinutes);
+
+    if (this._autoBackupInterval) {
+      clearInterval(this._autoBackupInterval);
+      this._autoBackupInterval = undefined;
+    }
+
+    if (enabled) {
+      const intervalMs = intervalMinutes * 60 * 1000;
+      this._autoBackupInterval = setInterval(() => {
+        this._performAutoBackup();
+      }, intervalMs);
+    }
+  }
+
+  private async _initializeAutoBackup() {
+    const enabled = this._globalState.get<boolean>("autoBackupEnabled", false);
+    const interval = this._globalState.get<number>("autoBackupInterval", 30);
+
+    if (enabled) {
+      await this._enableAutoBackup(true, interval);
+    }
+  }
+
+  private async _performAutoBackup() {
+    const notes = this._getSavedNotes();
+    const tasks = this._getSavedTasks();
+    const data = {
+      version: "1.0",
+      backedUpAt: new Date().toISOString(),
+      notes,
+      tasks,
+    };
+
+    try {
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
+      const backupDir = workspaceFolder
+        ? vscode.Uri.joinPath(workspaceFolder, ".nokanban-backups")
+        : vscode.Uri.joinPath(
+            vscode.Uri.file(vscode.env.appRoot),
+            ".nokanban-backups"
+          );
+
+      try {
+        await vscode.workspace.fs.createDirectory(backupDir);
+      } catch {
+        // Diretório já existe
+      }
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const backupFile = vscode.Uri.joinPath(
+        backupDir,
+        `backup-${timestamp}.json`
+      );
+
+      await vscode.workspace.fs.writeFile(
+        backupFile,
+        new TextEncoder().encode(JSON.stringify(data, null, 2))
+      );
+
+      // Manter apenas os últimos 10 backups
+      const files = await vscode.workspace.fs.readDirectory(backupDir);
+      const backupFiles = files
+        .filter(([name]) => name.startsWith("backup-"))
+        .sort()
+        .reverse();
+
+      if (backupFiles.length > 10) {
+        for (const [name] of backupFiles.slice(10)) {
+          await vscode.workspace.fs.delete(
+            vscode.Uri.joinPath(backupDir, name)
+          );
+        }
+      }
+    } catch (error) {
+      // Silenciosamente falha no backup automático
+      console.error("Erro no backup automático:", error);
+    }
   }
 }
