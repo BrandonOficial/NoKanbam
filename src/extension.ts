@@ -94,9 +94,13 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
     const validTasks = tasks.filter((t) => t?.text?.trim());
     const pendingCount = validTasks.filter((t) => !t.done).length;
 
-    this._view.badge = pendingCount > 0
-      ? { tooltip: `${pendingCount} tarefa(s) pendente(s)`, value: pendingCount }
-      : undefined;
+    this._view.badge =
+      pendingCount > 0
+        ? {
+            tooltip: `${pendingCount} tarefa(s) pendente(s)`,
+            value: pendingCount,
+          }
+        : undefined;
   }
 
   private async _importData() {
@@ -113,7 +117,7 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
         const fileData = await vscode.workspace.fs.readFile(fileUri[0]);
         const fileContent = new TextDecoder().decode(fileData);
         await this._globalState.update("notepadContent", fileContent);
-        
+
         if (this._view) {
           this._view.webview.postMessage({
             command: "updateNotes",
@@ -156,7 +160,8 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
       content += `(Nenhuma tarefa)\n`;
     } else {
       tasks.forEach((t) => {
-        content += `[${t.done ? "x" : " "}] ${t.text}\n`;
+        const priority = t.priority ? `[${t.priority.toUpperCase()}] ` : "";
+        content += `[${t.done ? "x" : " "}] ${priority}${t.text}\n`;
       });
     }
 
@@ -302,6 +307,40 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
         }
 
         /* NOTES AREA */
+        .notes-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        .notes-toolbar {
+            display: flex;
+            justify-content: flex-end;
+            padding: 12px 16px 8px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+        }
+
+        .preview-toggle {
+            background: transparent;
+            border: 1px solid var(--vscode-input-border);
+            color: var(--vscode-foreground);
+            cursor: pointer;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .preview-toggle:hover {
+            background: var(--vscode-list-hoverBackground);
+            border-color: var(--vscode-focusBorder);
+        }
+
         textarea {
             flex: 1;
             background: transparent;
@@ -313,6 +352,11 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
             font-family: var(--vscode-editor-font-family);
             font-size: 13px;
             line-height: 1.8;
+            display: block;
+        }
+
+        textarea.hidden {
+            display: none;
         }
 
         textarea::placeholder {
@@ -321,12 +365,151 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
             font-style: italic;
         }
 
+        .preview-content {
+            flex: 1;
+            padding: 24px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .preview-content.active {
+            display: block;
+        }
+
+        .preview-content h1 { font-size: 2em; margin: 0.67em 0; font-weight: 600; border-bottom: 1px solid var(--vscode-panel-border); padding-bottom: 0.3em; }
+        .preview-content h2 { font-size: 1.5em; margin: 0.75em 0; font-weight: 600; border-bottom: 1px solid var(--vscode-panel-border); padding-bottom: 0.3em; }
+        .preview-content h3 { font-size: 1.17em; margin: 0.83em 0; font-weight: 600; }
+        .preview-content h4 { font-size: 1em; margin: 1em 0; font-weight: 600; }
+        .preview-content h5 { font-size: 0.83em; margin: 1.17em 0; font-weight: 600; }
+        .preview-content h6 { font-size: 0.67em; margin: 1.5em 0; font-weight: 600; }
+        .preview-content p { margin: 1em 0; line-height: 1.6; }
+        .preview-content code {
+            background: var(--vscode-textCodeBlock-background);
+            color: var(--vscode-textPreformat-foreground);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: var(--vscode-editor-font-family);
+            font-size: 0.9em;
+        }
+        .preview-content pre {
+            background: var(--vscode-textCodeBlock-background);
+            padding: 12px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 1em 0;
+        }
+        .preview-content pre code {
+            background: none;
+            padding: 0;
+        }
+        .preview-content ul, .preview-content ol { margin: 1em 0; padding-left: 2em; }
+        .preview-content li { margin: 0.5em 0; line-height: 1.6; }
+        .preview-content blockquote {
+            border-left: 3px solid var(--vscode-textBlockQuote-border);
+            padding-left: 1em;
+            margin: 1em 0;
+            opacity: 0.8;
+        }
+        .preview-content a {
+            color: var(--vscode-textLink-foreground);
+            text-decoration: none;
+        }
+        .preview-content a:hover {
+            text-decoration: underline;
+        }
+        .preview-content table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 1em 0;
+        }
+        .preview-content table th,
+        .preview-content table td {
+            border: 1px solid var(--vscode-panel-border);
+            padding: 8px 12px;
+            text-align: left;
+        }
+        .preview-content table th {
+            background: var(--vscode-list-hoverBackground);
+            font-weight: 600;
+        }
+        .preview-content hr {
+            border: none;
+            border-top: 1px solid var(--vscode-panel-border);
+            margin: 1.5em 0;
+        }
+        .preview-content strong { font-weight: 600; }
+        .preview-content em { font-style: italic; }
+
         /* TASKS */
+        .task-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding: 16px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+        }
+
         .task-input-container {
             display: flex;
-            padding: 20px 20px 16px;
             gap: 10px;
-            border-bottom: 1px solid var(--vscode-panel-border);
+        }
+
+        .search-container {
+            position: relative;
+        }
+
+        #task-search {
+            width: 100%;
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-input-border);
+            padding: 8px 32px 8px 12px;
+            border-radius: 6px;
+            outline: none;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+
+        #task-search:focus {
+            border-color: var(--vscode-focusBorder);
+            box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+        }
+
+        .search-icon {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            opacity: 0.4;
+            pointer-events: none;
+        }
+
+        .filter-buttons {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .filter-btn {
+            background: var(--vscode-input-background);
+            border: 1px solid var(--vscode-input-border);
+            color: var(--vscode-foreground);
+            cursor: pointer;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .filter-btn:hover {
+            background: var(--vscode-list-hoverBackground);
+        }
+
+        .filter-btn.active {
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border-color: var(--vscode-button-background);
         }
 
         #task-input {
@@ -393,10 +576,81 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
             border: 1px solid transparent;
         }
 
+        li.hidden {
+            display: none;
+        }
+
         li:hover {
             background: var(--vscode-list-hoverBackground);
             border-color: var(--vscode-panel-border);
             transform: translateX(2px);
+        }
+
+        /* PRIORITY INDICATORS */
+        .priority-indicator {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            margin-right: 10px;
+            flex-shrink: 0;
+            transition: all 0.2s;
+        }
+
+        .priority-high { 
+            background: #f14c4c; 
+            box-shadow: 0 0 8px rgba(241, 76, 76, 0.4);
+        }
+        .priority-medium { 
+            background: #cca700; 
+            box-shadow: 0 0 8px rgba(204, 167, 0, 0.4);
+        }
+        .priority-low { 
+            background: #89d185; 
+            box-shadow: 0 0 8px rgba(137, 209, 133, 0.4);
+        }
+
+        .priority-selector {
+            display: flex;
+            gap: 4px;
+            margin-left: 8px;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        li:hover .priority-selector {
+            opacity: 1;
+        }
+
+        .priority-btn {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 2px solid transparent;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .priority-btn.high {
+            background: #f14c4c;
+        }
+
+        .priority-btn.medium {
+            background: #cca700;
+        }
+
+        .priority-btn.low {
+            background: #89d185;
+        }
+
+        .priority-btn:hover {
+            transform: scale(1.2);
+            border-color: var(--vscode-foreground);
+        }
+
+        .priority-btn.active {
+            border-color: var(--vscode-foreground);
+            box-shadow: 0 0 0 2px var(--vscode-editor-background);
         }
 
         /* CUSTOM CHECKBOX */
@@ -541,13 +795,41 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
     </div>
 
     <div id="view-notes" class="content-view active">
-        <textarea id="notes-area" placeholder="Comece a escrever suas ideias..."></textarea>
+        <div class="notes-container">
+            <div class="notes-toolbar">
+                <button class="preview-toggle" id="preview-toggle" title="Alternar Preview">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A4.003 4.003 0 0 1 8 3.5c1.258 0 2.4.69 2.97 1.71l1.204-1.204A5.488 5.488 0 0 0 8 2.5zm-4.131 9.631A5.487 5.487 0 0 0 8 13.5a5.487 5.487 0 0 0 4.131-1.869l-1.204-1.204A4.003 4.003 0 0 1 8 12.5c-1.258 0-2.4-.69-2.97-1.71l-1.204 1.204z"/>
+                        <path d="M1.354 1.354l13 13a.5.5 0 0 1-.708.708l-13-13a.5.5 0 0 1 .708-.708zM8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/>
+                    </svg>
+                    <span id="preview-toggle-text">Preview</span>
+                </button>
+            </div>
+            <textarea id="notes-area" placeholder="Comece a escrever suas ideias..."></textarea>
+            <div class="preview-content" id="preview-content"></div>
+        </div>
     </div>
 
     <div id="view-tasks" class="content-view">
-        <div class="task-input-container">
-            <input type="text" id="task-input" placeholder="Nova tarefa..." autocomplete="off" />
-            <button id="add-btn">+</button>
+        <div class="task-controls">
+            <div class="task-input-container">
+                <input type="text" id="task-input" placeholder="Nova tarefa..." autocomplete="off" />
+                <button id="add-btn">+</button>
+            </div>
+            <div class="search-container">
+                <input type="text" id="task-search" placeholder="Buscar tarefas..." autocomplete="off" />
+                <svg class="search-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
+                </svg>
+            </div>
+            <div class="filter-buttons">
+                <button class="filter-btn active" data-filter="all">Todas</button>
+                <button class="filter-btn" data-filter="pending">Pendentes</button>
+                <button class="filter-btn" data-filter="completed">Concluídas</button>
+                <button class="filter-btn" data-filter="high">Alta</button>
+                <button class="filter-btn" data-filter="medium">Média</button>
+                <button class="filter-btn" data-filter="low">Baixa</button>
+            </div>
         </div>
         <ul id="task-list"></ul>
     </div>
@@ -557,16 +839,141 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
         const notesArea = document.getElementById('notes-area');
         const taskListEl = document.getElementById('task-list');
         const taskInput = document.getElementById('task-input');
+        const taskSearch = document.getElementById('task-search');
+        const previewContent = document.getElementById('preview-content');
+        const previewToggle = document.getElementById('preview-toggle');
+        const previewToggleText = document.getElementById('preview-toggle-text');
         
         notesArea.value = "${safeNotes}";
         let tasks = ${safeTasks};
+        let currentFilter = 'all';
+        let searchQuery = '';
+
+        // Markdown Preview
+        function markdownToHtml(text) {
+            if (!text) return '';
+            var html = text;
+            var codeBlockPattern = String.fromCharCode(96) + String.fromCharCode(96) + String.fromCharCode(96) + '([\\\\s\\\\S]*?)' + String.fromCharCode(96) + String.fromCharCode(96) + String.fromCharCode(96);
+            var codeBlockRegex = new RegExp(codeBlockPattern, 'g');
+            var ltRegex = new RegExp('<', 'g');
+            var gtRegex = new RegExp('>', 'g');
+            html = html.replace(codeBlockRegex, function(match, code) {
+                return '<pre><code>' + code.replace(ltRegex, '&lt;').replace(gtRegex, '&gt;') + '</code></pre>';
+            });
+            var h3Regex = new RegExp('^### (.*$)', 'gim');
+            var h2Regex = new RegExp('^## (.*$)', 'gim');
+            var h1Regex = new RegExp('^# (.*$)', 'gim');
+            var boldRegex1 = new RegExp('\\\\*\\\\*(.+?)\\\\*\\\\*', 'g');
+            var boldRegex2 = new RegExp('__(.+?)__', 'g');
+            var codePattern = String.fromCharCode(96) + '([^' + String.fromCharCode(96) + ']+)' + String.fromCharCode(96);
+            var codeRegex = new RegExp(codePattern, 'g');
+            var italicRegex1 = new RegExp('\\\\*([^\\\\*\\\\n]+)\\\\*', 'g');
+            var italicRegex2 = new RegExp('_([^_\\\\n]+)_', 'g');
+            var linkRegex = new RegExp('\\\\[([^\\\\]]+)\\\\]\\\\(([^\\\\)]+)\\\\)', 'g');
+            var imgRegex = new RegExp('!\\\\[([^\\\\]]*)\\\\]\\\\(([^\\\\)]+)\\\\)', 'g');
+            var blockquoteRegex = new RegExp('^> (.+)$', 'gim');
+            var hrRegex = new RegExp('^---$', 'gim');
+            var listRegex1 = new RegExp('^\\\\* (.+)$', 'gim');
+            var listRegex2 = new RegExp('^\\\\d+\\\\. (.+)$', 'gim');
+            var brRegex1 = new RegExp('\\\\n\\\\n', 'g');
+            var brRegex2 = new RegExp('\\\\n', 'g');
+            html = html.replace(h3Regex, '<h3>$1</h3>');
+            html = html.replace(h2Regex, '<h2>$1</h2>');
+            html = html.replace(h1Regex, '<h1>$1</h1>');
+            html = html.replace(boldRegex1, '<strong>$1</strong>');
+            html = html.replace(boldRegex2, '<strong>$1</strong>');
+            html = html.replace(codeRegex, '<code>$1</code>');
+            html = html.replace(italicRegex1, '<em>$1</em>');
+            html = html.replace(italicRegex2, '<em>$1</em>');
+            html = html.replace(linkRegex, '<a href="$2">$1</a>');
+            html = html.replace(imgRegex, '<img src="$2" alt="$1" />');
+            html = html.replace(blockquoteRegex, '<blockquote>$1</blockquote>');
+            html = html.replace(hrRegex, '<hr>');
+            html = html.replace(listRegex1, '<li>$1</li>');
+            html = html.replace(listRegex2, '<li>$1</li>');
+            html = html.replace(brRegex1, '</p><p>');
+            html = html.replace(brRegex2, '<br>');
+            var listWrapRegex = new RegExp('(<li>.*?</li>)', 'gs');
+            html = html.replace(listWrapRegex, function(match) {
+                if (match.indexOf('<ul>') === -1) {
+                    return '<ul>' + match + '</ul>';
+                }
+                return match;
+            });
+            html = '<p>' + html + '</p>';
+            var pCleanRegex1 = new RegExp('<p><(h[1-6]|ul|ol|pre|blockquote|hr)', 'g');
+            var pCleanRegex2 = new RegExp('(</(h[1-6]|ul|ol|pre|blockquote|hr)>)</p>', 'g');
+            var pCleanRegex3 = new RegExp('<p></p>', 'g');
+            html = html.replace(pCleanRegex1, '<$1');
+            html = html.replace(pCleanRegex2, '$1');
+            html = html.replace(pCleanRegex3, '');
+            return html;
+        }
+
+        function updatePreview() {
+            const markdown = notesArea.value;
+            previewContent.innerHTML = markdownToHtml(markdown);
+        }
+
+        let isPreviewMode = false;
+        previewToggle.addEventListener('click', () => {
+            isPreviewMode = !isPreviewMode;
+            if (isPreviewMode) {
+                notesArea.classList.add('hidden');
+                previewContent.classList.add('active');
+                previewToggleText.textContent = 'Editar';
+                updatePreview();
+            } else {
+                notesArea.classList.remove('hidden');
+                previewContent.classList.remove('active');
+                previewToggleText.textContent = 'Preview';
+            }
+        });
 
         notesArea.addEventListener('input', () => {
             vscode.postMessage({ command: 'saveNotes', text: notesArea.value });
+            if (isPreviewMode) {
+                updatePreview();
+            }
         });
 
+        function getFilteredTasks() {
+            let filtered = tasks.filter(task => {
+                if (!task?.text) return false;
+                
+                // Search filter
+                if (searchQuery && !task.text.toLowerCase().includes(searchQuery.toLowerCase())) {
+                    return false;
+                }
+                
+                // Status filter
+                if (currentFilter === 'pending' && task.done) return false;
+                if (currentFilter === 'completed' && !task.done) return false;
+                
+                // Priority filter
+                if (currentFilter === 'high' && task.priority !== 'high') return false;
+                if (currentFilter === 'medium' && task.priority !== 'medium') return false;
+                if (currentFilter === 'low' && task.priority !== 'low') return false;
+                
+                return true;
+            });
+            
+            // Sort by priority: high > medium > low > none
+            const priorityOrder = { high: 0, medium: 1, low: 2, none: 3 };
+            filtered.sort((a, b) => {
+                const aPriority = priorityOrder[a.priority] ?? priorityOrder.none;
+                const bPriority = priorityOrder[b.priority] ?? priorityOrder.none;
+                if (aPriority !== bPriority) return aPriority - bPriority;
+                return 0;
+            });
+            
+            return filtered;
+        }
+
         function renderTasks() {
-            if (!tasks.length) {
+            const filteredTasks = getFilteredTasks();
+            
+            if (!filteredTasks.length) {
                 taskListEl.innerHTML = \`
                     <div class="empty-state">
                         <svg viewBox="0 0 16 16" fill="currentColor">
@@ -574,21 +981,31 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
                             <path d="M5 3.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5zM5.5 7a.5.5 0 0 0 0 1h9a.5.5 0 0 0 0-1h-9zm0 4a.5.5 0 0 0 0 1h9a.5.5 0 0 0 0-1h-9z"/>
                             <path d="M1.5 7a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5H2a.5.5 0 0 1-.5-.5V7zM2 7h1v1H2V7zm0 3.5a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h1a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 0-.5-.5H2zm1 .5H2v1h1v-1z"/>
                         </svg>
-                        <p>Nenhuma tarefa ainda.<br>Adicione uma acima!</p>
+                        <p>\${tasks.length === 0 ? 'Nenhuma tarefa ainda.<br>Adicione uma acima!' : 'Nenhuma tarefa encontrada.'}</p>
                     </div>
                 \`;
                 return;
             }
 
             taskListEl.innerHTML = '';
-            tasks.forEach((task, index) => {
-                if (!task?.text) return;
+            filteredTasks.forEach((task) => {
+                const index = tasks.indexOf(task);
+                if (index === -1) return;
 
+                const priority = task.priority || 'none';
+                const priorityClass = priority !== 'none' ? \`priority-\${priority}\` : '';
+                
                 const li = document.createElement('li');
                 li.className = task.done ? 'completed' : '';
                 li.innerHTML = \`
                     <input type="checkbox" \${task.done ? 'checked' : ''} onchange="toggleTask(\${index})">
+                    \${priority !== 'none' ? \`<div class="priority-indicator \${priorityClass}"></div>\` : '<div class="priority-indicator" style="opacity: 0;"></div>'}
                     <span class="task-text" onclick="toggleTask(\${index})">\${task.text}</span>
+                    <div class="priority-selector">
+                        <button class="priority-btn high \${priority === 'high' ? 'active' : ''}" onclick="setPriority(\${index}, 'high')" title="Alta"></button>
+                        <button class="priority-btn medium \${priority === 'medium' ? 'active' : ''}" onclick="setPriority(\${index}, 'medium')" title="Média"></button>
+                        <button class="priority-btn low \${priority === 'low' ? 'active' : ''}" onclick="setPriority(\${index}, 'low')" title="Baixa"></button>
+                    </div>
                     <button class="delete-btn" onclick="deleteTask(\${index})" title="Excluir">
                         <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
                             <path d="M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.75 1.75 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.702-1.576l-.66-6.6a.75.75 0 1 1 1.493-.149Z"/>
@@ -602,7 +1019,7 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
         function addTask() {
             const text = taskInput.value.trim();
             if (text) {
-                tasks.push({ text, done: false });
+                tasks.push({ text, done: false, priority: 'medium' });
                 taskInput.value = '';
                 updateTasks();
             }
@@ -617,12 +1034,37 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
             tasks.splice(index, 1);
             updateTasks();
         };
+
+        window.setPriority = (index, priority) => {
+            if (tasks[index].priority === priority) {
+                tasks[index].priority = undefined;
+            } else {
+                tasks[index].priority = priority;
+            }
+            updateTasks();
+        };
         
         function updateTasks() {
             renderTasks();
             const cleanTasks = tasks.filter(t => t?.text?.trim());
             vscode.postMessage({ command: 'saveTasks', tasks: cleanTasks });
         }
+
+        // Search functionality
+        taskSearch.addEventListener('input', (e) => {
+            searchQuery = e.target.value;
+            renderTasks();
+        });
+
+        // Filter functionality
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentFilter = btn.dataset.filter;
+                renderTasks();
+            });
+        });
 
         document.getElementById('add-btn').addEventListener('click', addTask);
         document.getElementById('export-btn').addEventListener('click', () => {
