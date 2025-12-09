@@ -29,7 +29,7 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
     this._initializeAutoBackup();
   }
 
-  public resolveWebviewView(
+  public async resolveWebviewView(
     webviewView: vscode.WebviewView,
     context: vscode.WebviewViewResolveContext,
     _token: vscode.CancellationToken
@@ -47,17 +47,19 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
       "autoBackupInterval",
       30
     );
-    const gistToken = this._globalState.get<string>("gistToken", "");
+
+    // Verificar status de autenticação
+    const isAuthenticated = await this._checkGitHubAuth();
 
     this._updateBadge(savedTasks);
 
-    webviewView.webview.html = this._getHtmlForWebview(
+    webviewView.webview.html = await this._getHtmlForWebview(
       webviewView.webview,
       savedNotes,
       savedTasks,
       autoBackupEnabled,
       autoBackupInterval,
-      gistToken
+      isAuthenticated
     );
 
     webviewView.webview.onDidReceiveMessage(async (data) => {
@@ -91,15 +93,22 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
       case "syncGist":
         await this._syncGist();
         break;
-      case "configureGist":
-        if (data.token) {
-          await this._globalState.update("gistToken", data.token);
+      case "authenticateGist":
+        const token = await this._authenticateGitHub();
+        if (token) {
           vscode.window.showInformationMessage(
-            "Token configurado com sucesso!"
+            "Autenticado com GitHub com sucesso!"
           );
-        } else {
-          await this._configureGist();
+          if (this._view) {
+            this._view.webview.postMessage({
+              command: "updateAuthStatus",
+              authenticated: true,
+            });
+          }
         }
+        break;
+      case "disconnectGist":
+        await this._disconnectGitHub();
         break;
       case "enableAutoBackup":
         await this._enableAutoBackup(data.enabled, data.interval);
@@ -266,17 +275,21 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
     return content;
   }
 
-  private _getHtmlForWebview(
+  private async _checkGitHubAuth(): Promise<boolean> {
+    const token = await this._getGitHubToken();
+    return token !== null;
+  }
+
+  private async _getHtmlForWebview(
     webview: vscode.Webview,
     notes: string,
     tasks: any[],
     autoBackupEnabled: boolean = false,
     autoBackupInterval: number = 30,
-    gistToken: string = ""
-  ) {
+    isAuthenticated: boolean = false
+  ): Promise<string> {
     const safeNotes = this._sanitizeForJson(notes);
     const safeTasks = JSON.stringify(tasks);
-    const safeGistToken = this._sanitizeForJson(gistToken);
 
     return `<!DOCTYPE html>
 <html lang="pt-br">
@@ -941,11 +954,6 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
         <button class="tab-btn active" onclick="switchTab('notes')">Notes</button>
         <button class="tab-btn" onclick="switchTab('tasks')">Tasks</button>
         <div class="actions">
-            <button class="action-btn" id="sync-btn" title="Sincronizar com GitHub Gist">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zM4.5 7.5a.5.5 0 0 0 0 1h5.793l-2.147 2.146a.5.5 0 0 0 .708.708l3-3a.5.5 0 0 0 0-.708l-3-3a.5.5 0 1 0-.708.708L10.293 7.5H4.5z"/>
-                </svg>
-            </button>
             <button class="action-btn" id="import-btn" title="Importar">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                     <path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708l3-3z"/>
@@ -1007,10 +1015,17 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
             <div class="settings-section">
                 <h3>Sincronização GitHub Gist</h3>
                 <div class="settings-item">
-                    <label>Token do GitHub (Personal Access Token)</label>
-                    <input type="password" id="gist-token-input" placeholder="ghp_xxxxxxxxxxxx" />
-                    <button class="settings-btn" id="save-gist-token-btn">Salvar Token</button>
-                    <button class="settings-btn secondary" id="sync-gist-btn">Sincronizar Agora</button>
+                    <p id="auth-status" style="font-size: 12px; color: var(--vscode-descriptionForeground); margin-bottom: 12px;">
+                        Status: Não autenticado
+                    </p>
+                    <button class="settings-btn" id="authenticate-gist-btn" style="display: flex; align-items: center; justify-content: center; gap: 8px;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                        </svg>
+                        Autenticar com GitHub
+                    </button>
+                    <button class="settings-btn secondary" id="disconnect-gist-btn" style="margin-top: 8px; display: none;">Desconectar</button>
+                    <button class="settings-btn secondary" id="sync-gist-btn" style="margin-top: 8px;">Sincronizar Agora</button>
                 </div>
             </div>
 
@@ -1049,7 +1064,7 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
         // Inicializar configurações
         document.getElementById('auto-backup-checkbox').checked = ${autoBackupEnabled};
         document.getElementById('backup-interval-select').value = '${autoBackupInterval}';
-        document.getElementById('gist-token-input').value = "${safeGistToken}";
+        updateAuthStatus(${isAuthenticated});
 
         notesArea.addEventListener('input', () => {
             vscode.postMessage({ command: 'saveNotes', text: notesArea.value });
@@ -1220,24 +1235,38 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
         document.getElementById('import-btn').addEventListener('click', () => {
             vscode.postMessage({ command: 'import' });
         });
-        document.getElementById('sync-btn').addEventListener('click', () => {
-            vscode.postMessage({ command: 'syncGist' });
-        });
         document.getElementById('settings-btn').addEventListener('click', () => {
             document.getElementById('settings-modal').classList.add('active');
         });
         document.getElementById('close-settings').addEventListener('click', () => {
             document.getElementById('settings-modal').classList.remove('active');
         });
-        document.getElementById('save-gist-token-btn').addEventListener('click', () => {
-            const token = document.getElementById('gist-token-input').value;
-            if (token) {
-                vscode.postMessage({ command: 'configureGist', token });
-            }
+        document.getElementById('authenticate-gist-btn').addEventListener('click', () => {
+            vscode.postMessage({ command: 'authenticateGist' });
+        });
+        document.getElementById('disconnect-gist-btn').addEventListener('click', () => {
+            vscode.postMessage({ command: 'disconnectGist' });
         });
         document.getElementById('sync-gist-btn').addEventListener('click', () => {
             vscode.postMessage({ command: 'syncGist' });
         });
+        
+        function updateAuthStatus(authenticated) {
+            const statusEl = document.getElementById('auth-status');
+            const authBtn = document.getElementById('authenticate-gist-btn');
+            const disconnectBtn = document.getElementById('disconnect-gist-btn');
+            if (authenticated) {
+                statusEl.textContent = 'Status: Autenticado ✓';
+                statusEl.style.color = 'var(--vscode-textLink-foreground)';
+                authBtn.textContent = 'Reautenticar';
+                disconnectBtn.style.display = 'block';
+            } else {
+                statusEl.textContent = 'Status: Não autenticado';
+                statusEl.style.color = 'var(--vscode-descriptionForeground)';
+                authBtn.textContent = 'Autenticar com GitHub';
+                disconnectBtn.style.display = 'none';
+            }
+        }
         document.getElementById('auto-backup-checkbox').addEventListener('change', (e) => {
             const enabled = e.target.checked;
             const interval = parseInt(document.getElementById('backup-interval-select').value);
@@ -1292,6 +1321,9 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
                 tasks = msg.tasks || [];
                 renderTasks();
             }
+            if (msg.command === 'updateAuthStatus') {
+                updateAuthStatus(msg.authenticated);
+            }
         });
     </script>
 </body>
@@ -1305,32 +1337,82 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
       .replace(/\n/g, "\\n");
   }
 
-  private async _configureGist() {
-    const token = await vscode.window.showInputBox({
-      prompt: "Digite seu GitHub Personal Access Token",
-      password: true,
-      placeHolder: "ghp_xxxxxxxxxxxx",
-      ignoreFocusOut: true,
-    });
+  private async _getGitHubToken(): Promise<string | null> {
+    try {
+      const session = await vscode.authentication.getSession(
+        "github",
+        ["gist"],
+        { createIfNone: false }
+      );
+      return session?.accessToken || null;
+    } catch (error) {
+      console.error("Erro ao obter token do GitHub:", error);
+      return null;
+    }
+  }
 
-    if (token) {
-      await this._globalState.update("gistToken", token);
-      vscode.window.showInformationMessage("Token configurado com sucesso!");
+  private async _authenticateGitHub(): Promise<string | null> {
+    try {
+      const session = await vscode.authentication.getSession(
+        "github",
+        ["gist"],
+        { createIfNone: true }
+      );
+      return session?.accessToken || null;
+    } catch (error) {
+      vscode.window.showErrorMessage(`Erro ao autenticar com GitHub: ${error}`);
+      return null;
+    }
+  }
+
+  private async _disconnectGitHub() {
+    try {
+      const session = await vscode.authentication.getSession(
+        "github",
+        ["gist"],
+        { createIfNone: false }
+      );
+
+      if (session) {
+        // Remover o Gist ID salvo
+        await this._globalState.update("gistId", undefined);
+
+        // Tentar remover a sessão (pode não estar disponível em todas as versões do VS Code)
+        // O usuário pode precisar fazer logout manualmente nas configurações do VS Code
+        vscode.window.showInformationMessage(
+          "Desconectado com sucesso! O Gist ID foi removido. Para remover completamente a autenticação, vá em Configurações > Contas."
+        );
+
+        if (this._view) {
+          this._view.webview.postMessage({
+            command: "updateAuthStatus",
+            authenticated: false,
+          });
+        }
+      } else {
+        vscode.window.showInformationMessage("Você não está autenticado.");
+      }
+    } catch (error) {
+      vscode.window.showErrorMessage(`Erro ao desconectar: ${error}`);
     }
   }
 
   private async _syncGist() {
-    const token = this._globalState.get<string>("gistToken");
+    let token = await this._getGitHubToken();
     if (!token) {
-      const configure = await vscode.window.showWarningMessage(
-        "Token do GitHub não configurado. Deseja configurar agora?",
+      const authenticate = await vscode.window.showWarningMessage(
+        "Você precisa autenticar com GitHub para sincronizar. Deseja autenticar agora?",
         "Sim",
         "Não"
       );
-      if (configure === "Sim") {
-        await this._configureGist();
+      if (authenticate === "Sim") {
+        token = await this._authenticateGitHub();
+        if (!token) {
+          return;
+        }
+      } else {
+        return;
       }
-      return;
     }
 
     const gistId = this._globalState.get<string>("gistId");
@@ -1368,9 +1450,10 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
     const response = await fetch("https://api.github.com/gists", {
       method: "POST",
       headers: {
-        Authorization: `token ${token}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
         "User-Agent": "NoKanban-VSCode-Extension",
+        Accept: "application/vnd.github+json",
       },
       body: JSON.stringify({
         description: "NoKanban Backup",
@@ -1396,9 +1479,10 @@ class NotepadSidebarProvider implements vscode.WebviewViewProvider {
     const response = await fetch(`https://api.github.com/gists/${gistId}`, {
       method: "PATCH",
       headers: {
-        Authorization: `token ${token}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
         "User-Agent": "NoKanban-VSCode-Extension",
+        Accept: "application/vnd.github+json",
       },
       body: JSON.stringify({
         description: "NoKanban Backup",

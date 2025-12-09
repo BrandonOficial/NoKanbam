@@ -35,6 +35,12 @@
         "command": "notepad.clear",
         "title": "Limpar Notas"
       }
+    ],
+    "authentication": [
+      {
+        "id": "github",
+        "label": "GitHub"
+      }
     ]
   },
   "scripts": {
