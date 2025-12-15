@@ -1,6 +1,25 @@
 import * as vscode from "vscode";
 import { TextEncoder, TextDecoder } from "util";
 
+interface QuickNote {
+  id: string;
+  text: string;
+  timestamp: string;
+  tags?: string[];
+}
+
+interface Task {
+  text: string;
+  done: boolean;
+  priority?: string;
+}
+
+interface StorageData {
+  notepadContent: string;
+  todoList: Task[];
+  quickNotes: QuickNote[];
+}
+
 export function activate(context: vscode.ExtensionContext) {
   const provider = new NotepadSidebarProvider(
     context.extensionUri,
